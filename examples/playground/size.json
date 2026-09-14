@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "component": {
+    "minified": 12427,
+    "gzip": 5034
+  },
+  "package": {
+    "gzip": 16654,
+    "unpacked": 46957
+  },
+  "sourceMap": false,
+  "method": "Vite production build; RulerPicker export only; React and react/jsx-runtime external; gzip level 9; decimal kB.",
+  "unusedImportBytes": 30
+}
