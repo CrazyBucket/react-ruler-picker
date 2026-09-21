@@ -300,13 +300,6 @@ export const apiRows: [string, string, string, string, string][] = [
     "禁用指针、滚轮与 ref 操作，并中止进行中的惯性滚动。",
   ],
   [
-    "onKeyDown / onKeyUp",
-    "KeyboardEventHandler<HTMLDivElement>",
-    "—",
-    "Forwarded to the focusable surface. No built-in key mapping or preventDefault; consumers can call ref methods.",
-    "直接透传给可聚焦的交互区域，不内置按键映射或 preventDefault；可自行调用 ref 方法。",
-  ],
-  [
     "onScrollStart",
     "() => void",
     "—",

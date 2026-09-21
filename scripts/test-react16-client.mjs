@@ -46,21 +46,15 @@ const { RulerPicker } = await import("react-ruler-picker");
 const host = document.createElement("div");
 document.body.appendChild(host);
 const ref = React.createRef();
-let keyCalls = 0;
 act(() => void ReactDOM.render(React.createElement(RulerPicker, {
   ref, min: 0, max: 100, defaultValue: 50, wheelSensitivity: 1,
-  onKeyDown() { keyCalls++; },
 }), host));
 const slider = host.querySelector('[role="slider"]');
 act(() => void slider.dispatchEvent(new window.WheelEvent("wheel", {
   deltaY: 16, bubbles: true, cancelable: true,
 })));
 assert.equal(ref.current.getValue(), 52);
-act(() => void slider.dispatchEvent(new window.KeyboardEvent("keydown", {
-  key: "ArrowRight", bubbles: true,
-})));
 assert.equal(ref.current.getValue(), 52);
-assert.equal(keyCalls, 1);
 act(() => ref.current.scrollToValue(80));
 assert.equal(ref.current.getValue(), 80);
 act(() => void slider.dispatchEvent(new window.WheelEvent("wheel", {
@@ -70,6 +64,6 @@ act(() => void ReactDOM.unmountComponentAtNode(host));
 assert.equal(frames.size, 0);
 await new Promise((resolve) => setTimeout(resolve, 100));
 assert.equal(frames.size, 0, "Wheel release must not schedule motion after unmount");
-console.log(`React ${React.version}: packed mount, wheel, keyboard passthrough, ref and cleanup pass`);
+console.log(`React ${React.version}: packed mount, wheel, ref and cleanup pass`);
 // React 16's scheduler keeps a MessageChannel alive in the simulated DOM.
 process.exit(0);

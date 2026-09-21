@@ -226,24 +226,6 @@ function IconComponent() {
   );
 }
 
-function IconKeyboard() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M6 12h.001M10 12h.001M14 12h.001M18 12h.001M7 16h10" />
-    </svg>
-  );
-}
-
 const i18n = {
   zh: {
     skip: "跳转到主要内容",
@@ -280,7 +262,6 @@ const i18n = {
     goTo: (val: number) => `跳转到 ${val}`,
     clear: "清空",
     eventLogHint: "操作标尺即可在此查看事件回调。",
-    footnote: "可传入 onKeyDown / onKeyUp 自行定义键盘行为。",
     footerText: "React 数值标尺选择器。",
     sourceCode: "查看源码",
     copy: "复制",
@@ -360,8 +341,6 @@ const i18n = {
     goTo: (val: number) => `Go to ${val}`,
     clear: "Clear",
     eventLogHint: "Interact with the ruler to see events here.",
-    footnote:
-      "Supply onKeyDown / onKeyUp to define your own keyboard behavior.",
     footerText: "Numeric ruler picker for React.",
     sourceCode: "Source code",
     copy: "Copy",
@@ -951,12 +930,6 @@ function StoryCanvas({ story, lang }: { story: Story; lang: Lang }) {
           {tab === "code" && <Code text={source} lang={lang} />}
         </div>
       </section>
-      <div className="story-footnote">
-        <span>
-          <IconKeyboard />
-        </span>
-        <p>{t.footnote}</p>
-      </div>
     </>
   );
 }

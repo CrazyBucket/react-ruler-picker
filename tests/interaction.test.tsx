@@ -42,13 +42,6 @@ const render = async (
   );
   return ref;
 };
-const key = async (name: string) => {
-  await act(async () =>
-    slider().dispatchEvent(
-      new KeyboardEvent("keydown", { key: name, bubbles: true }),
-    ),
-  );
-};
 const wheel = async (deltaY: number, options: WheelEventInit & { momentum?: boolean } = {}) => {
   const event = new WheelEvent("wheel", {
     deltaY,
@@ -447,7 +440,7 @@ describe("controlled values and lifecycle", () => {
     expect(value()).toBe(65);
     expect(end).not.toHaveBeenCalled();
   });
-  it("disabling stops pending work and ignores wheel, pointer, keyboard and ref", async () => {
+  it("disabling stops pending work and ignores wheel, pointer and ref", async () => {
     const end = vi.fn();
     const change = vi.fn();
     const ref = await render({
@@ -462,7 +455,6 @@ describe("controlled values and lifecycle", () => {
     const at = value();
     change.mockClear();
     await wheel(20);
-    await key("ArrowRight");
     await fling();
     await act(async () => ref.current?.scrollToValue(0));
     await tick(2000);
@@ -490,61 +482,8 @@ describe("controlled values and lifecycle", () => {
   );
 });
 
-describe("keyboard, ref and rendering", () => {
-  it("does not interpret navigation keys", async () => {
-    const change = vi.fn();
-    const end = vi.fn();
-    await render({ onValueChange: change, onValueChangeEnd: end });
-    for (const name of [
-      "ArrowRight",
-      "ArrowDown",
-      "PageUp",
-      "PageDown",
-      "Home",
-      "End",
-    ]) {
-      const event = new KeyboardEvent("keydown", {
-        key: name,
-        bubbles: true,
-        cancelable: true,
-      });
-      await act(async () => slider().dispatchEvent(event));
-      expect(event.defaultPrevented).toBe(false);
-    }
-    await tick();
-    expect(value()).toBe(50);
-    expect(change).not.toHaveBeenCalled();
-    expect(end).not.toHaveBeenCalled();
-  });
-  it("forwards keyboard handlers so consumers can opt in", async () => {
-    const ref = createRef<RulerPickerRef>();
-    const up = vi.fn();
-    const change = vi.fn();
-    const down = vi.fn((event) => {
-      if (event.key === "ArrowRight") {
-        event.preventDefault();
-        ref.current?.scrollToValue(ref.current.getValue() + 5);
-      }
-    });
-    await render(
-      { onKeyDown: down, onKeyUp: up, onValueChange: change },
-      ref,
-    );
-    await key("ArrowRight");
-    await act(async () =>
-      slider().dispatchEvent(
-        new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }),
-      ),
-    );
-    await tick();
-    expect(value()).toBe(55);
-    expect(down).toHaveBeenCalledOnce();
-    expect(up).toHaveBeenCalledOnce();
-    expect(change).toHaveBeenLastCalledWith(55, {
-      source: "programmatic",
-    });
-  });
-  it("does not emit for idle no-op ref and key calls", async () => {
+describe("ref and rendering", () => {
+  it("does not emit for an idle no-op ref call", async () => {
     const change = vi.fn();
     const end = vi.fn();
     const ref = await render({
@@ -552,7 +491,6 @@ describe("keyboard, ref and rendering", () => {
       onValueChange: change,
       onValueChangeEnd: end,
     });
-    await key("ArrowUp");
     await act(async () => ref.current?.scrollToValue(100));
     await tick();
     expect(change).not.toHaveBeenCalled();

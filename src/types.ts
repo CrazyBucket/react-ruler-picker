@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode, KeyboardEventHandler } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 export type RulerOrientation = "horizontal" | "vertical";
 
@@ -93,10 +93,6 @@ export interface RulerPickerProps {
   "aria-label"?: string;
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
-
-  /** Passed to the focusable surface; no keyboard behavior is built in. */
-  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
-  onKeyUp?: KeyboardEventHandler<HTMLDivElement>;
 
   onScrollStart?: () => void;
   onValueChange?: (value: number, meta: RulerValueChangeMeta) => void;

@@ -355,8 +355,6 @@ const RulerPickerInner = forwardRef<RulerPickerRef, RulerPickerProps>(
             aria-valuetext={text}
             aria-disabled={disabled}
             {...events}
-            onKeyDown={props.onKeyDown}
-            onKeyUp={props.onKeyUp}
           />
           <canvas
             ref={canvasRef}

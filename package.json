@@ -1,6 +1,6 @@
 {
   "name": "react-ruler-picker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "React canvas ruler picker with tactile-motion physics, pointer and wheel input, and TypeScript support.",
   "license": "MIT",
   "type": "module",
