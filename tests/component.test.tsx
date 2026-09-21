@@ -4,12 +4,12 @@ import { describe, expect, it } from "vitest";
 import { RulerPicker } from "../src";
 
 describe("RulerPicker (SSR render)", () => {
-  it("renders a constant-size scroll surface", () => {
+  it("renders a constant-size gesture surface", () => {
     const html = renderToStaticMarkup(
       <RulerPicker min={0} max={10} step={1} />,
     );
     expect(html).toContain("rrp-root");
-    expect(html.match(/rrp-content/g)).toHaveLength(1);
+    expect(html.match(/rrp-surface/g)).toHaveLength(1);
     expect(html).toContain('aria-valuemax="10"');
   });
 
@@ -42,14 +42,24 @@ describe("RulerPicker (SSR render)", () => {
 
   it("renders value after track in vertical orientation and before track in horizontal", () => {
     const verticalHtml = renderToStaticMarkup(
-      <RulerPicker min={0} max={10} defaultValue={5} orientation="vertical" />,
+      <RulerPicker
+        min={0}
+        max={10}
+        defaultValue={5}
+        orientation="vertical"
+      />,
     );
     const trackIndexV = verticalHtml.indexOf("rrp-track");
     const valueIndexV = verticalHtml.indexOf("rrp-value");
     expect(trackIndexV).toBeLessThan(valueIndexV);
 
     const horizontalHtml = renderToStaticMarkup(
-      <RulerPicker min={0} max={10} defaultValue={5} orientation="horizontal" />,
+      <RulerPicker
+        min={0}
+        max={10}
+        defaultValue={5}
+        orientation="horizontal"
+      />,
     );
     const trackIndexH = horizontalHtml.indexOf("rrp-track");
     const valueIndexH = horizontalHtml.indexOf("rrp-value");
@@ -58,7 +68,12 @@ describe("RulerPicker (SSR render)", () => {
 
   it("supports tickAlignment bottom and attaches bottom cursor class", () => {
     const html = renderToStaticMarkup(
-      <RulerPicker min={0} max={10} defaultValue={5} tickAlignment="bottom" />,
+      <RulerPicker
+        min={0}
+        max={10}
+        defaultValue={5}
+        tickAlignment="bottom"
+      />,
     );
     expect(html).toContain("rrp-cursor--bottom");
   });
@@ -82,12 +97,14 @@ describe("SSR edge cases", () => {
     const html = renderToStaticMarkup(<RulerPicker min={0} max={100000} />);
     expect(html.length).toBeLessThan(2000);
   });
-  it("rejects ranges browsers cannot scroll faithfully", () => {
+  it("rejects non-finite and numerically unsafe ranges", () => {
     expect(() =>
       renderToStaticMarkup(<RulerPicker min={0} max={Infinity} />),
     ).toThrow(RangeError);
     expect(() =>
-      renderToStaticMarkup(<RulerPicker min={0} max={10000000} />),
+      renderToStaticMarkup(
+        <RulerPicker min={0} max={Number.MAX_SAFE_INTEGER * 2} />,
+      ),
     ).toThrow(RangeError);
   });
   it("uses the last complete step as the maximum", () => {

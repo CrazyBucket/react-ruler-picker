@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  // Classic JSX keeps Node ESM consumers compatible with React 16.8+.
+  // Classic JSX keeps React external in both module formats.
   oxc: { jsx: { runtime: "classic", pragma: "createElement" } },
   build: {
     outDir: "dist",
@@ -12,7 +12,7 @@ export default defineConfig({
     },
     sourcemap: process.env.RULER_PICKER_SOURCEMAP === "1",
     rollupOptions: {
-      external: ["react", "react/jsx-runtime"],
+      external: ["react", "react/jsx-runtime", "tactile-motion"],
       output: { banner: "'use client';" },
     },
   },

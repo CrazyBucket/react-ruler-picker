@@ -1,16 +1,22 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, KeyboardEventHandler } from "react";
 
 export type RulerOrientation = "horizontal" | "vertical";
 
 export type TickAlignment = "top" | "bottom" | "left" | "right";
 
-export type RulerPlatform = "auto" | "ios" | "android" | "harmony";
+/** Velocity uses CSS pixels/ms, matching tactile-motion pixel-based controls. */
+export interface RulerMotionOptions {
+  /** Release velocity retained per 16⅔ms. [0, 1), default 0.9. */
+  friction?: number;
+  /** Release velocity multiplier. Default 1. */
+  velocityMultiplier?: number;
+  /** Release speed cap in CSS pixels/ms; also caps wheel input rate. Default 3. */
+  maxVelocity?: number;
+  /** Engine inertia rest speed in CSS pixels/ms. Default 0.01. */
+  threshold?: number;
+}
 
-export type RulerValueSource =
-  | "drag"
-  | "momentum"
-  | "programmatic"
-  | "keyboard";
+export type RulerValueSource = "drag" | "wheel" | "momentum" | "programmatic";
 
 export interface TickStyle {
   width?: number;
@@ -58,7 +64,8 @@ export interface RulerPickerProps {
 
   minorTickStyle?: TickStyle;
   majorTickStyle?: TickStyle;
-  getTickStyle?: ((info: TickInfo) => Partial<TickStyle> | undefined) | undefined;
+  getTickStyle?:
+    ((info: TickInfo) => Partial<TickStyle> | undefined) | undefined;
   labelStyle?: LabelStyle;
   formatLabel?: (value: number) => string;
 
@@ -75,8 +82,10 @@ export interface RulerPickerProps {
   orientation?: RulerOrientation;
   tickAlignment?: TickAlignment;
   reverse?: boolean;
-  /** Android/Harmony enable frame sampling for WebViews that skip momentum scroll events. */
-  platform?: RulerPlatform;
+  /** Pointer and momentum-capable wheel physics. Native wheel fallback uses browser inertia. */
+  motion?: RulerMotionOptions;
+  /** Wheel pixel-to-tick sensitivity; nonnegative, default 1.8. Scales wheel distance. Native fallback scales its scroll range without applying engine rate limits. */
+  wheelSensitivity?: number;
   /** Vertical track height in CSS pixels. Default: 240. */
   height?: number;
 
@@ -84,6 +93,10 @@ export interface RulerPickerProps {
   "aria-label"?: string;
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
+
+  /** Passed to the focusable surface; no keyboard behavior is built in. */
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  onKeyUp?: KeyboardEventHandler<HTMLDivElement>;
 
   onScrollStart?: () => void;
   onValueChange?: (value: number, meta: RulerValueChangeMeta) => void;

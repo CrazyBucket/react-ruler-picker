@@ -6,7 +6,7 @@ export type {
   CursorStyle,
   RulerOrientation,
   TickAlignment,
-  RulerPlatform,
+  RulerMotionOptions,
   RulerValueSource,
   RulerValueChangeMeta,
   RulerPickerProps,

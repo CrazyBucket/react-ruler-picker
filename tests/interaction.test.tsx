@@ -1,11 +1,10 @@
 // @vitest-environment happy-dom
-import { act, createRef, useState } from "react";
+import { act, createRef, StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RulerPicker } from "../src";
 import type { RulerPickerProps, RulerPickerRef } from "../src";
-
 let host: HTMLDivElement;
 let root: Root;
 const ctx = {
@@ -17,7 +16,9 @@ const ctx = {
   stroke: vi.fn(),
   fillText: vi.fn(),
 };
-const slider = () => host.querySelector('[role="slider"]') as HTMLDivElement;
+const slider = () =>
+  host.querySelector('[role="slider"]') as HTMLDivElement;
+const value = () => Number(slider().getAttribute("aria-valuenow"));
 const tick = async (ms = 200) => {
   await act(async () => {
     vi.advanceTimersByTime(ms);
@@ -27,55 +28,102 @@ const render = async (
   props: Partial<RulerPickerProps> = {},
   ref = createRef<RulerPickerRef>(),
 ) => {
-  await act(async () => {
+  await act(async () =>
     root.render(
-      <RulerPicker min={0} max={100} defaultValue={50} {...props} ref={ref} />,
-    );
-  });
+      <RulerPicker
+        min={0}
+        max={100}
+        defaultValue={50}
+        wheelSensitivity={1}
+        {...props}
+        ref={ref}
+      />,
+    ),
+  );
   return ref;
 };
-const key = async (key: string) => {
-  await act(async () => {
+const key = async (name: string) => {
+  await act(async () =>
     slider().dispatchEvent(
-      new KeyboardEvent("keydown", { key, bubbles: true }),
-    );
-  });
+      new KeyboardEvent("keydown", { key: name, bubbles: true }),
+    ),
+  );
 };
-const wheel = async (delta: number) => {
-  await act(async () => {
+const wheel = async (deltaY: number, options: WheelEventInit & { momentum?: boolean } = {}) => {
+  const event = new WheelEvent("wheel", {
+    deltaY,
+    bubbles: true,
+    cancelable: true,
+    ...options,
+  });
+  Object.defineProperty(event, "momentum", { value: options.momentum });
+  // happy-dom WheelEvent extends UIEvent and omits MouseEvent modifier fields.
+  Object.defineProperty(event, "ctrlKey", {
+    value: options.ctrlKey ?? false,
+  });
+  await act(async () => slider().dispatchEvent(event));
+  return event;
+};
+const pointer = async (
+  type: string,
+  x = 200,
+  options: PointerEventInit = {},
+) => {
+  await act(async () =>
     slider().dispatchEvent(
-      new WheelEvent("wheel", {
-        deltaY: delta,
+      new PointerEvent(type, {
         bubbles: true,
-        cancelable: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 0,
+        isPrimary: true,
+        clientX: x,
+        clientY: x,
+        ...options,
       }),
-    );
-  });
-  await tick(20);
+    ),
+  );
 };
-const touch = async (type: string) => {
-  await act(async () => {
-    slider().dispatchEvent(new Event(type, { bubbles: true }));
-  });
+const fling = async (distance = 80, options: PointerEventInit = {}) => {
+  await pointer("pointerdown", 200, options);
+  await tick(50);
+  await pointer("pointermove", 200 - distance, options);
+  await pointer("pointerup", 200 - distance, options);
 };
-
 beforeEach(() => {
-  vi.useFakeTimers();
+  Object.defineProperty(WheelEvent.prototype, "momentum", {
+    configurable: true,
+    get: () => false,
+  });
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "performance"],
+  });
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     ctx as unknown as CanvasRenderingContext2D,
   );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+    400,
+  );
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+    240,
+  );
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
     setTimeout(() => cb(performance.now()), 16),
   );
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  Object.assign(HTMLElement.prototype, {
+    setPointerCapture: vi.fn(),
+    releasePointerCapture: vi.fn(),
+    hasPointerCapture: () => true,
+  });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
 });
 afterEach(async () => {
+  delete (WheelEvent.prototype as WheelEvent & { momentum?: boolean })
+    .momentum;
   await act(async () => root.unmount());
   host.remove();
   vi.clearAllTimers();
@@ -84,48 +132,419 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-describe("RulerPicker interaction", () => {
-  it("initializes silently and exposes accessible slider semantics", async () => {
-    const change = vi.fn();
-    const ref = await render({ "aria-label": "Height", onValueChange: change });
+describe("pointer physics", () => {
+  it("does not report a scroll session for a stationary click", async () => {
+    const start = vi.fn();
+    const end = vi.fn();
+    await render({ onScrollStart: start, onValueChangeEnd: end });
+    await pointer("pointerdown");
+    await tick(20);
+    await pointer("pointerup");
     await tick();
-    expect(change).not.toHaveBeenCalled();
-    expect(slider().scrollLeft).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
+  });
+
+  it.each(["mouse", "touch", "pen"])(
+    "uses the same engine for %s",
+    async (pointerType) => {
+      const change = vi.fn();
+      const end = vi.fn();
+      const start = vi.fn();
+      await render({
+        max: 1000,
+        onValueChange: change,
+        onValueChangeEnd: end,
+        onScrollStart: start,
+      });
+      await fling(80, { pointerType });
+      expect(value()).toBe(60);
+      await tick(2000);
+      expect(value()).toBeGreaterThan(60);
+      expect(value()).toBeLessThanOrEqual(120);
+      expect(
+        change.mock.calls.some(([, meta]) => meta.source === "momentum"),
+      ).toBe(true);
+      expect(change).toHaveBeenCalledWith(60, { source: "drag" });
+      expect(end).toHaveBeenCalledExactlyOnceWith(value());
+      expect(start).toHaveBeenCalledOnce();
+    },
+  );
+  it.each(["horizontal", "vertical"] as const)(
+    "maps %s reverse input",
+    async (orientation) => {
+      await render({
+        orientation,
+        reverse: true,
+        motion: { velocityMultiplier: 0 },
+      });
+      await fling(80);
+      expect(value()).toBe(40);
+      expect(slider().scrollLeft).toBe(0);
+      expect(slider().scrollTop).toBe(0);
+    },
+  );
+  it("holds until release and forgets an old fling after a pause", async () => {
+    const end = vi.fn();
+    await render({ onValueChangeEnd: end });
+    await pointer("pointerdown");
+    await tick(50);
+    await pointer("pointermove", 120);
+    await tick(400);
+    expect(end).not.toHaveBeenCalled();
+    await pointer("pointerup", 120);
+    await tick(2000);
+    expect(value()).toBe(60);
+    expect(end).toHaveBeenCalledOnce();
+  });
+  it("clamps bounds and allows reversing away from the edge", async () => {
+    await render({ defaultValue: 99, motion: { friction: 0 } });
+    await pointer("pointerdown");
+    await tick(50);
+    await pointer("pointermove", 0);
+    expect(value()).toBe(100);
+    await tick(50);
+    await pointer("pointermove", 16);
+    expect(value()).toBe(100);
+    await pointer("pointermove", 216);
+    expect(value()).toBe(97);
+    await pointer("pointerup", 216);
+  });
+  it.each(["pointercancel", "lostpointercapture"])(
+    "stops without inertia on %s",
+    async (event) => {
+      const end = vi.fn();
+      await render({ onValueChangeEnd: end });
+      await pointer("pointerdown");
+      await tick(50);
+      await pointer("pointermove", 120);
+      await pointer(event, 120);
+      await tick(2000);
+      expect(value()).toBe(60);
+      expect(end).toHaveBeenCalledOnce();
+    },
+  );
+  it("ignores secondary pointers and unrelated releases", async () => {
+    await render({ motion: { friction: 0 } });
+    await pointer("pointerdown");
+    await tick(50);
+    await pointer("pointermove", 50, { pointerId: 2, isPrimary: false });
+    expect(value()).toBe(50);
+    await pointer("pointerup", 50, { pointerId: 2 });
+    await pointer("pointermove", 120);
+    expect(value()).toBe(60);
+    await pointer("pointerup", 120);
+  });
+  it("new input interrupts inertia", async () => {
+    await render();
+    await fling();
+    await tick(100);
+    const held = value();
+    await pointer("pointerdown");
+    await tick(2000);
+    expect(value()).toBe(held);
+    await pointer("pointerup");
+  });
+  it("pixel velocity cap yields consistent pixel travel across spacing", async () => {
+    const end = vi.fn();
+    const props = {
+      max: 1000,
+      onValueChangeEnd: end,
+      motion: { friction: 0.9, maxVelocity: 0.8 },
+    };
+    await render(props);
+    await fling(80);
+    await tick(2000);
+    const first = value();
+    await render({ ...props, value: 50, tickSpacing: 16 });
+    await fling(160);
+    await tick(2000);
+    const second = end.mock.calls.at(-1)![0];
+    expect(
+      Math.abs((first - 60) * 8 - (second - 60) * 16),
+    ).toBeLessThanOrEqual(16);
+    expect(first).toBeLessThanOrEqual(76);
+  });
+  it("honors reduced motion for released gestures", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+    } as MediaQueryList);
+    await render();
+    await fling();
+    await tick(2000);
+    expect(value()).toBe(60);
+  });
+  it("compensates for CSS-scaled input", async () => {
+    await render({ motion: { friction: 0 } });
+    vi.spyOn(slider(), "getBoundingClientRect").mockReturnValue({
+      width: 800,
+      height: 480,
+    } as DOMRect);
+    await fling(80);
+    expect(value()).toBe(55);
+  });
+});
+
+describe("wheel adapter", () => {
+  it("injects wheel displacement and settles once after input becomes idle", async () => {
+    const change = vi.fn();
+    const end = vi.fn();
+    const start = vi.fn();
+    await render({
+      motion: { friction: 0 },
+      onValueChange: change,
+      onValueChangeEnd: end,
+      onScrollStart: start,
+    });
+    expect((await wheel(11)).defaultPrevented).toBe(true);
+    await wheel(10);
+    expect(value()).toBe(52);
+    await tick(79);
+    expect(end).not.toHaveBeenCalled();
+    await tick(1);
+    expect(end).toHaveBeenCalledExactlyOnceWith(52);
+    expect(start).toHaveBeenCalledOnce();
+    expect(change).toHaveBeenLastCalledWith(52, { source: "wheel" });
+  });
+  it.each([
+    [8, 0, 51],
+    [1, 1, 52],
+    [1, 2, 52],
+  ])(
+    "normalizes delta %i in mode %i before limiting input",
+    async (delta, mode, expected) => {
+      await render({ motion: { friction: 0 } });
+      await wheel(delta!, { deltaMode: mode! });
+      expect(value()).toBe(expected);
+    },
+  );
+  it("uses dominant horizontal and vertical axes", async () => {
+    await render();
+    await wheel(1, { deltaX: 8 });
+    expect(value()).toBe(51);
+    await render({ orientation: "vertical" });
+    await wheel(8, { deltaX: 80 });
+    expect(value()).toBe(52);
+  });
+  it("supports sensitivity, zero, zoom bypass, and boundary overscroll", async () => {
+    await render({ wheelSensitivity: 0.5 });
+    await wheel(16);
+    expect(value()).toBe(51);
+    expect((await wheel(40, { ctrlKey: true })).defaultPrevented).toBe(
+      false,
+    );
+    await render({ wheelSensitivity: 0 });
+    expect((await wheel(16)).defaultPrevented).toBe(false);
+    await render({ value: 100 });
+    expect((await wheel(16)).defaultPrevented).toBe(true);
+  });
+  it("handles mouse wheels on coarse-pointer and Harmony devices too", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+    } as MediaQueryList);
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("HarmonyOS");
+    await render();
+    expect((await wheel(16)).defaultPrevented).toBe(true);
+    expect(value()).toBe(52);
+  });
+});
+
+describe("controlled values and lifecycle", () => {
+  it("initializes silently with accessible semantics and a working ref", async () => {
+    const change = vi.fn();
+    const ref = await render({
+      "aria-label": "Height",
+      onValueChange: change,
+    });
     expect(ref.current?.getValue()).toBe(50);
     expect(slider().getAttribute("aria-label")).toBe("Height");
-    expect(slider().tabIndex).toBe(0);
+    expect(change).not.toHaveBeenCalled();
   });
-  it("supports arrow, page and boundary keys with one settled callback", async () => {
+  it("preserves motion with synchronous controlled feedback through final settlement", async () => {
+    const end = vi.fn();
+    function Controlled() {
+      const [v, setV] = useState(50);
+      return (
+        <RulerPicker
+          min={0}
+          max={1000}
+          value={v}
+          onValueChange={setV}
+          onValueChangeEnd={end}
+        />
+      );
+    }
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <Controlled />
+        </StrictMode>,
+      ),
+    );
+    await fling();
+    await tick(2000);
+    expect(value()).toBeGreaterThan(60);
+    expect(end).toHaveBeenCalledExactlyOnceWith(value());
+  });
+  it("does not rewind earlier controlled feedback during newer motion", async () => {
+    await render({ value: 50 });
+    await pointer("pointerdown", 200);
+    await pointer("pointermove", 184);
+    await pointer("pointermove", 168);
+    expect(value()).toBe(54);
+    await render({ value: 52 });
+    expect(value()).toBe(54);
+    await render({ value: 54 });
+    await pointer("pointerup", 168);
+    await tick(1500);
+    expect(value()).toBe(54);
+  });
+  it("restores rejected controlled proposals after settlement", async () => {
+    const end = vi.fn();
+    await render({
+      value: 50,
+      motion: { friction: 0 },
+      onValueChangeEnd: end,
+    });
+    await wheel(8);
+    expect(value()).toBe(51);
+    await tick(1500);
+    expect(value()).toBe(50);
+    expect(end).toHaveBeenCalledExactlyOnceWith(51);
+  });
+  it("external value changes interrupt silently", async () => {
+    const change = vi.fn();
+    const end = vi.fn();
+    await render({
+      value: 50,
+      onValueChange: change,
+      onValueChangeEnd: end,
+    });
+    await fling();
+    change.mockClear();
+    await render({
+      value: 20,
+      onValueChange: change,
+      onValueChangeEnd: end,
+    });
+    await tick(2000);
+    expect(value()).toBe(20);
+    expect(change).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
+  });
+  it("geometry changes realign and cancel motion", async () => {
+    const end = vi.fn();
+    await render({ onValueChangeEnd: end });
+    await fling();
+    await render({
+      min: 65,
+      max: 70,
+      reverse: true,
+      orientation: "vertical",
+      onValueChangeEnd: end,
+    });
+    await tick(2000);
+    expect(value()).toBe(65);
+    expect(end).not.toHaveBeenCalled();
+  });
+  it("disabling stops pending work and ignores wheel, pointer, keyboard and ref", async () => {
+    const end = vi.fn();
+    const change = vi.fn();
+    const ref = await render({
+      onValueChange: change,
+      onValueChangeEnd: end,
+    });
+    await fling();
+    await render(
+      { disabled: true, onValueChange: change, onValueChangeEnd: end },
+      ref,
+    );
+    const at = value();
+    change.mockClear();
+    await wheel(20);
+    await key("ArrowRight");
+    await fling();
+    await act(async () => ref.current?.scrollToValue(0));
+    await tick(2000);
+    expect(value()).toBe(at);
+    expect(change).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
+    expect(slider().tabIndex).toBe(-1);
+  });
+  it.each(["wheel", "pointer", "ref"])(
+    "cleans up %s work on unmount",
+    async (mode) => {
+      const end = vi.fn();
+      const ref = await render({ onValueChangeEnd: end });
+      if (mode === "wheel") await wheel(16);
+      else if (mode === "pointer") await fling();
+      else
+        await act(async () =>
+          ref.current?.scrollToValue(90, { animated: true }),
+        );
+      await act(async () => root.render(null));
+      await tick(2000);
+      expect(end).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+});
+
+describe("keyboard, ref and rendering", () => {
+  it("does not interpret navigation keys", async () => {
     const change = vi.fn();
     const end = vi.fn();
     await render({ onValueChange: change, onValueChangeEnd: end });
-    await key("ArrowRight");
-    await key("PageUp");
-    expect(change).toHaveBeenLastCalledWith(61, { source: "keyboard" });
+    for (const name of [
+      "ArrowRight",
+      "ArrowDown",
+      "PageUp",
+      "PageDown",
+      "Home",
+      "End",
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        key: name,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => slider().dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+    }
     await tick();
-    expect(end).toHaveBeenCalledExactlyOnceWith(61);
-    await key("End");
-    await tick();
-    expect(slider().getAttribute("aria-valuenow")).toBe("100");
-    await key("Home");
-    await tick();
-    expect(slider().getAttribute("aria-valuenow")).toBe("0");
+    expect(value()).toBe(50);
+    expect(change).not.toHaveBeenCalled();
+    expect(end).not.toHaveBeenCalled();
   });
-  it("uses scrollTop for vertical, reversed scales and ref navigation", async () => {
-    const ref = await render({
-      orientation: "vertical",
-      reverse: true,
-      defaultValue: 20,
+  it("forwards keyboard handlers so consumers can opt in", async () => {
+    const ref = createRef<RulerPickerRef>();
+    const up = vi.fn();
+    const change = vi.fn();
+    const down = vi.fn((event) => {
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        ref.current?.scrollToValue(ref.current.getValue() + 5);
+      }
     });
-    expect(slider().scrollTop).toBe(640);
-    expect(slider().scrollLeft).toBe(0);
-    await act(async () => ref.current?.scrollToValue(70));
+    await render(
+      { onKeyDown: down, onKeyUp: up, onValueChange: change },
+      ref,
+    );
+    await key("ArrowRight");
+    await act(async () =>
+      slider().dispatchEvent(
+        new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }),
+      ),
+    );
     await tick();
-    expect(slider().scrollTop).toBe(240);
-    expect(ref.current?.getValue()).toBe(70);
-    expect(slider().getAttribute("aria-orientation")).toBe("vertical");
+    expect(value()).toBe(55);
+    expect(down).toHaveBeenCalledOnce();
+    expect(up).toHaveBeenCalledOnce();
+    expect(change).toHaveBeenLastCalledWith(55, {
+      source: "programmatic",
+    });
   });
-  it("deduplicates no-op ref and keyboard changes", async () => {
+  it("does not emit for idle no-op ref and key calls", async () => {
     const change = vi.fn();
     const end = vi.fn();
     const ref = await render({
@@ -139,535 +558,301 @@ describe("RulerPicker interaction", () => {
     expect(change).not.toHaveBeenCalled();
     expect(end).not.toHaveBeenCalled();
   });
-  it("snaps wheel movement after idle and starts only once", async () => {
-    const start = vi.fn();
-    const end = vi.fn();
-    await render({ onScrollStart: start, onValueChangeEnd: end });
-    await wheel(11);
-    await wheel(10);
-    await tick();
-    expect(slider().scrollLeft).toBe(424);
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(end).toHaveBeenCalledExactlyOnceWith(53);
-  });
-  it.each(["android", "harmony"] as const)(
-    "samples %s momentum even without scroll events",
-    async (platform) => {
-      const change = vi.fn();
-      const end = vi.fn();
-      await render({ platform, onValueChange: change, onValueChangeEnd: end });
-      await touch("touchstart");
-      slider().scrollLeft = 432;
-      await tick(32);
-      expect(change).toHaveBeenLastCalledWith(54, { source: "drag" });
-      await touch("touchend");
-      slider().scrollLeft = 468;
-      await tick(32);
-      expect(change).toHaveBeenLastCalledWith(59, { source: "momentum" });
-      await tick(200);
-      expect(slider().scrollLeft).toBe(472);
-      expect(end).toHaveBeenCalledExactlyOnceWith(59);
-    },
-  );
-  it("does not snap while a touch is held stationary", async () => {
-    const end = vi.fn();
-    await render({ platform: "android", onValueChangeEnd: end });
-    await touch("touchstart");
-    slider().scrollLeft = 411;
-    await tick(400);
-    expect(end).not.toHaveBeenCalled();
-    expect(slider().scrollLeft).toBe(411);
-    await touch("touchend");
-    await tick();
-    expect(slider().scrollLeft).toBe(408);
-    expect(end).toHaveBeenCalledTimes(1);
-  });
-  it("accepts controlled updates without cancelling a scroll session", async () => {
-    const end = vi.fn();
-    function Controlled() {
-      const [value, setValue] = useState(50);
-      return (
-        <RulerPicker
-          min={0}
-          max={100}
-          value={value}
-          onValueChange={setValue}
-          onValueChangeEnd={end}
-        />
-      );
-    }
-    await act(async () => root.render(<Controlled />));
-    await wheel(13);
-    await wheel(15);
-    await tick();
-    expect(slider().getAttribute("aria-valuenow")).toBe("54");
-    expect(slider().scrollLeft).toBe(432);
-    expect(end).toHaveBeenCalledExactlyOnceWith(54);
-  });
-  it("restores a controlled value if the parent rejects a change", async () => {
-    await render({ value: 50 });
-    await key("ArrowRight");
-    await tick();
-    expect(slider().getAttribute("aria-valuenow")).toBe("50");
-    expect(slider().scrollLeft).toBe(400);
-  });
-  it.each(["horizontal", "vertical"] as const)(
-    "preserves %s momentum when controlled feedback trails RAF sampling",
-    async (orientation) => {
-      const end = vi.fn();
-      function Controlled() {
-        const [value, setValue] = useState(50);
-        return (
-          <RulerPicker
-            min={0}
-            max={100}
-            value={value}
-            platform="harmony"
-            orientation={orientation}
-            onValueChange={(next) => setTimeout(() => setValue(next), 24)}
-            onValueChangeEnd={end}
-          />
-        );
-      }
-      await act(async () => root.render(<Controlled />));
-      const axis = orientation === "vertical" ? "scrollTop" : "scrollLeft";
-      let position = 400;
-      const write = vi.fn((next: number) => {
-        position = next;
-      });
-      Object.defineProperty(slider(), axis, {
-        configurable: true,
-        get: () => position,
-        set: write,
-      });
-      await touch("touchstart");
-      position = 416.3;
-      await tick(16);
-      position = 432.6;
-      await tick(16);
-      // The first parent update commits after a newer native position was sampled.
-      await tick(8);
-      expect(write).not.toHaveBeenCalled();
-      await touch("touchend");
-      position = 448.4;
-      await tick(16);
-      expect(write).not.toHaveBeenCalled();
-      position = 464.6;
-      await tick(32);
-      expect(write).not.toHaveBeenCalled();
-      await tick(220);
-      expect(position).toBe(464);
-      expect(end).toHaveBeenCalledExactlyOnceWith(58);
-    },
-  );
-  it("does not rewrite an aligned offset in response to queued scroll events", async () => {
-    await render();
-    const write = vi.spyOn(slider(), "scrollLeft", "set");
-    for (let i = 0; i < 3; i++) {
-      await act(async () => slider().dispatchEvent(new Event("scroll")));
-    }
-    expect(write).not.toHaveBeenCalled();
-  });
-  it("still applies a new external value during an active gesture", async () => {
-    await render({ value: 50, platform: "harmony" });
-    await touch("touchstart");
-    slider().scrollLeft = 432.6;
-    await tick(16);
-    await render({ value: 80, platform: "harmony" });
-    expect(slider().scrollLeft).toBe(640);
-    expect(slider().getAttribute("aria-valuenow")).toBe("80");
-  });
-  it("aligns external values silently", async () => {
-    const change = vi.fn();
-    await render({ value: 20, onValueChange: change });
-    await render({ value: 80, onValueChange: change });
-    await tick();
-    expect(slider().scrollLeft).toBe(640);
-    expect(change).not.toHaveBeenCalled();
-  });
-  it("freezes pending scrolling and rejects new input while disabled", async () => {
+  it("animates ref navigation and reports intermediate programmatic values", async () => {
     const change = vi.fn();
     const end = vi.fn();
-    const ref = await render({ onValueChange: change, onValueChangeEnd: end });
-    await wheel(16);
-    change.mockClear();
-    await render(
-      {
-        value: 52,
-        disabled: true,
-        onValueChange: change,
-        onValueChangeEnd: end,
-      },
-      ref,
-    );
-    await key("ArrowRight");
-    await wheel(30);
-    await act(async () => ref.current?.scrollToValue(80));
-    slider().scrollLeft = 600;
+    const ref = await render({
+      onValueChange: change,
+      onValueChangeEnd: end,
+    });
     await act(async () =>
-      slider().dispatchEvent(new Event("scroll", { bubbles: true })),
+      ref.current?.scrollToValue(90, { animated: true }),
     );
-    await tick();
-    expect(slider().scrollLeft).toBe(416);
-    expect(change).not.toHaveBeenCalled();
-    expect(end).not.toHaveBeenCalled();
-    expect(slider().tabIndex).toBe(-1);
+    await tick(100);
+    expect(value()).toBeGreaterThan(50);
+    expect(value()).toBeLessThan(90);
+    await tick(200);
+    expect(ref.current?.getValue()).toBe(90);
+    expect(end).toHaveBeenCalledExactlyOnceWith(90);
+    expect(
+      change.mock.calls.every(
+        ([, meta]) => meta.source === "programmatic",
+      ),
+    ).toBe(true);
   });
-  it("ignores stray scroll events outside a user session", async () => {
-    const change = vi.fn();
-    await render({ onValueChange: change });
-    slider().scrollLeft = 0;
+  it("stops a ref animation when a pointer takes control", async () => {
+    const ref = await render();
     await act(async () =>
-      slider().dispatchEvent(new Event("scroll", { bubbles: true })),
+      ref.current?.scrollToValue(90, { animated: true }),
     );
-    await tick();
-    expect(slider().scrollLeft).toBe(400);
-    expect(change).not.toHaveBeenCalled();
+    await tick(64);
+    await pointer("pointerdown");
+    const held = value();
+    await tick(500);
+    expect(value()).toBe(held);
+    await pointer("pointerup");
   });
-  it("normalizes a changed range and orientation", async () => {
-    await render();
-    await render({ min: 60, max: 70, orientation: "vertical" });
-    expect(slider().getAttribute("aria-valuenow")).toBe("60");
-    expect(slider().scrollTop).toBe(0);
-  });
-  it("keeps DOM and canvas drawing bounded for 100,001 values", async () => {
+  it("draws only visible ticks for ranges beyond native scroll limits", async () => {
     await render();
     const count = host.querySelectorAll("*").length;
     ctx.lineTo.mockClear();
-    await render({ max: 100000 });
+    await render({ max: 10000000 });
     expect(host.querySelectorAll("*")).toHaveLength(count);
-    expect(ctx.lineTo.mock.calls.length).toBeLessThan(150);
-    expect(host.querySelectorAll("canvas")).toHaveLength(1);
+    expect(ctx.lineTo.mock.calls.length).toBeLessThan(200);
+    expect(host.querySelector(".rrp-content")).toBeNull();
   });
-  it("does not reallocate the canvas for a value-only update", async () => {
+  it("does not reallocate the canvas on a value-only update", async () => {
     await render();
-    const canvas = host.querySelector("canvas")!;
-    const width = vi.spyOn(canvas, "width", "set");
-    await key("ArrowRight");
-    await tick();
+    const width = vi.spyOn(host.querySelector("canvas")!, "width", "set");
+    await wheel(8);
     expect(width).not.toHaveBeenCalled();
   });
-  it("cancels callbacks and frame sampling on unmount", async () => {
-    const end = vi.fn();
-    await render({ platform: "android", onValueChangeEnd: end });
-    await wheel(15);
-    await act(async () => root.render(null));
-    await tick(1000);
-    expect(end).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-describe("geometry and gesture regressions", () => {
-  it("realigns geometry changes during active momentum", async () => {
-    await render({ platform: "android" });
-    await wheel(17);
-    await render({
-      platform: "android",
-      orientation: "vertical",
-      reverse: true,
-    });
-    await tick();
-    expect(slider().scrollTop).toBe(384);
-    expect(slider().getAttribute("aria-valuenow")).toBe("52");
-  });
-  it("snaps sub-step native scrolling even when the value never changed", async () => {
-    const change = vi.fn();
-    await render({ platform: "android", onValueChange: change });
-    await touch("touchstart");
-    slider().scrollLeft = 403;
-    await tick(32);
-    await touch("touchend");
-    await tick();
-    expect(slider().scrollLeft).toBe(400);
-    expect(change).not.toHaveBeenCalled();
-  });
-  it("aligns again after a hidden track becomes visible", async () => {
-    let resize: () => void = () => {};
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(cb: () => void) {
-          resize = cb;
-        }
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
-    await render({ defaultValue: 80 });
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
-    await act(async () => resize());
-    expect(slider().scrollLeft).toBe(640);
-    expect(host.querySelector("canvas")?.width).toBe(400);
-  });
-  it("maintains logical tick placement in reverse mode", async () => {
-    ctx.fillText.mockClear();
-    await render({
-      min: 0,
-      max: 95,
-      reverse: true,
-      defaultValue: 50,
-      majorStep: 10,
-    });
-    const labels = ctx.fillText.mock.calls.map((call) => Number(call[0]));
-    expect(labels.length).toBeGreaterThan(0);
-    expect(labels.every((value) => value % 10 === 0)).toBe(true);
-  });
-  it("uses the resize fallback when ResizeObserver is missing", async () => {
+  it("supports resize fallback and per-tick styles", async () => {
     vi.stubGlobal("ResizeObserver", undefined);
-    await render();
-    expect(host.querySelector("canvas")?.width).toBe(400);
-  });
-  it("supports getTickStyle to customize individual ticks", async () => {
-    const getTickStyle = vi.fn((info) => {
-      if (info.value === 50) {
-        return { color: "#ff0000", width: 4, height: 35, borderRadius: 2 };
-      }
-      return undefined;
-    });
-    await render({
-      min: 0,
-      max: 100,
-      step: 1,
-      defaultValue: 50,
-      getTickStyle,
-    });
-    expect(getTickStyle).toHaveBeenCalled();
-    const targetCall = getTickStyle.mock.calls.find(
-      (call) => call[0].value === 50,
+    const getTickStyle = vi.fn((info) =>
+      info.value === 50 ? { color: "red" } : undefined,
     );
-    expect(targetCall).toBeDefined();
-    expect(targetCall![0]).toEqual({
+    await render({ getTickStyle, tickAlignment: "bottom" });
+    expect(host.querySelector("canvas")?.width).toBe(400);
+    expect(getTickStyle).toHaveBeenCalledWith({
       value: 50,
       index: 50,
       isMajor: true,
       isLabel: true,
     });
-    expect(ctx.stroke).toHaveBeenCalled();
+    expect(host.querySelector(".rrp-cursor--bottom")).not.toBeNull();
   });
-  it("renders with tickAlignment bottom and draws from bottom baseline", async () => {
-    ctx.moveTo.mockClear();
-    ctx.lineTo.mockClear();
-    await render({
-      min: 0,
-      max: 10,
-      defaultValue: 5,
-      tickAlignment: "bottom",
-    });
-    expect(
-      slider().parentElement?.querySelector(".rrp-cursor--bottom"),
-    ).toBeDefined();
-    expect(ctx.moveTo).toHaveBeenCalled();
-    expect(ctx.lineTo).toHaveBeenCalled();
+  it("draws reverse labels on logical major steps", async () => {
+    ctx.fillText.mockClear();
+    await render({ max: 95, reverse: true, majorStep: 10 });
+    const labels = ctx.fillText.mock.calls.map((call) => Number(call[0]));
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels.every((v) => v % 10 === 0)).toBe(true);
   });
 });
 
-describe("native pointer scrolling regressions", () => {
-  const nativePointer = async (type: string) => {
-    await act(async () => {
-      slider().dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          pointerId: 7,
-          pointerType: "touch",
-          button: 0,
-        }),
-      );
-    });
+describe("elastic edges", () => {
+  const labelAxis = (label: string, vertical = false) => {
+    const call = ctx.fillText.mock.calls
+      .filter((call) => call[0] === label)
+      .at(-1);
+    expect(call).toBeDefined();
+    return call![vertical ? 2 : 1] as number;
   };
   it.each(["horizontal", "vertical"] as const)(
-    "allows native %s scroll after a touch pointerdown without touchstart",
+    "pulls beyond the %s edge while keeping values valid, then returns",
     async (orientation) => {
-      const change = vi.fn();
       const end = vi.fn();
+      const change = vi.fn();
+      const vertical = orientation === "vertical";
+      const center = vertical ? 120 : 200;
       await render({
-        platform: "harmony",
+        defaultValue: 0,
         orientation,
         onValueChange: change,
         onValueChangeEnd: end,
       });
-      await nativePointer("pointerdown");
-      if (orientation === "vertical") slider().scrollTop = 432;
-      else slider().scrollLeft = 432;
-      await act(async () => slider().dispatchEvent(new Event("scroll")));
-      await tick(32);
-      expect(
-        orientation === "vertical" ? slider().scrollTop : slider().scrollLeft,
-      ).toBe(432);
-      expect(change).toHaveBeenCalledWith(54, expect.anything());
-      await nativePointer("pointercancel");
-      if (orientation === "vertical") slider().scrollTop = 451;
-      else slider().scrollLeft = 451;
-      // Momentum can continue after pointercancel without any scroll events.
-      await tick();
-      expect(
-        orientation === "vertical" ? slider().scrollTop : slider().scrollLeft,
-      ).toBe(448);
-      expect(end).toHaveBeenCalledExactlyOnceWith(56);
+      await pointer("pointerdown", 200);
+      await tick(50);
+      await pointer("pointermove", 280);
+      expect(value()).toBe(0);
+      const firstOverscroll = labelAxis("0", vertical);
+      expect(firstOverscroll).toBeGreaterThan(center);
+      expect(firstOverscroll).toBeLessThan(center + 72);
+      await pointer("pointermove", 360);
+      expect(value()).toBe(0);
+      expect(labelAxis("0", vertical)).toBeGreaterThan(firstOverscroll);
+      expect(labelAxis("0", vertical)).toBeLessThan(center + 72);
+      await tick(300);
+      expect(end).not.toHaveBeenCalled();
+      await pointer("pointerup", 280);
+      await tick(96);
+      expect(labelAxis("0", vertical)).toBeGreaterThan(center);
+      expect(end).not.toHaveBeenCalled();
+      await tick(300);
+      expect(labelAxis("0", vertical)).toBeCloseTo(center);
+      expect(change).not.toHaveBeenCalled();
+      expect(end).toHaveBeenCalledExactlyOnceWith(0);
     },
   );
-  it("starts Harmony sampling from pointer input even if scroll events are absent", async () => {
-    const change = vi.fn();
-    await render({ platform: "harmony", onValueChange: change });
-    await nativePointer("pointerdown");
-    slider().scrollLeft = 432;
-    await tick(32);
-    expect(change).toHaveBeenCalledWith(54, expect.anything());
-  });
-  it("recovers authorization on touchmove and keeps gestures inside nested sheets", async () => {
-    const parent = vi.fn();
-    await act(async () =>
-      root.render(
-        <div onTouchMove={parent}>
-          <RulerPicker min={0} max={100} defaultValue={50} platform="harmony" />
-        </div>,
-      ),
-    );
-    // Covers a missed touchstart or a geometry reset after the finger went down.
-    await touch("touchmove");
-    slider().scrollLeft = 432;
-    await act(async () => slider().dispatchEvent(new Event("scroll")));
-    await tick(32);
-    expect(slider().scrollLeft).toBe(432);
-    expect(slider().getAttribute("aria-valuenow")).toBe("54");
-    expect(parent).not.toHaveBeenCalled();
-  });
-});
-
-describe("mobile momentum settling", () => {
-  it("does not truncate moving momentum when RAF and scroll callbacks are delayed", async () => {
-    let skipFrames = false;
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
-      setTimeout(() => {
-        if (!skipFrames) cb(performance.now());
-      }, 16),
-    );
+  it("provides wheel overscroll at the maximum and settles after rebound", async () => {
     const end = vi.fn();
-    const change = vi.fn();
+    await render({ defaultValue: 100, onValueChangeEnd: end });
+    await wheel(80);
+    expect(value()).toBe(100);
+    expect(labelAxis("100")).toBeLessThan(200);
+    await tick(60);
+    expect(end).not.toHaveBeenCalled();
+    await tick(400);
+    expect(labelAxis("100")).toBeCloseTo(200);
+    expect(end).toHaveBeenCalledExactlyOnceWith(100);
+  });
+  it("settles after a long decaying wheel tail and a zero final event", async () => {
+    const end = vi.fn();
+    await render({ defaultValue: 100, onValueChangeEnd: end });
+    for (let i = 0; i < 40; i++) {
+      await wheel(80 * Math.exp(-i / 5));
+      await tick(16);
+      expect(value()).toBe(100);
+    }
+    await wheel(0);
+    await tick(500);
+    expect(end).toHaveBeenCalledExactlyOnceWith(100);
+    expect(labelAxis("100")).toBeCloseTo(200);
+  });
+  it.each([
+    ["horizontal", false, 100],
+    ["horizontal", false, 0],
+    ["vertical", false, 100],
+    ["vertical", false, 0],
+    ["horizontal", true, 100],
+    ["horizontal", true, 0],
+    ["vertical", true, 100],
+    ["vertical", true, 0],
+  ] as const)(
+    "returns on native momentum onset despite outward tail (%s, reverse=%s, bound=%s)",
+    async (orientation, reverse, bound) => {
+      const end = vi.fn();
+      const vertical = orientation === "vertical";
+      const center = vertical ? 120 : 200;
+      const sign = (bound === 100 ? 1 : -1) * (reverse ? -1 : 1);
+      await render({
+        defaultValue: bound === 100 ? 99 : 1,
+        orientation,
+        reverse,
+        onValueChangeEnd: end,
+      });
+      await wheel(sign * 80);
+      const offset = () =>
+        Math.abs(labelAxis(String(bound), vertical) - center);
+      const pulled = offset();
+      expect(pulled).toBeGreaterThan(0);
+      await tick(16);
+      expect(offset()).toBeCloseTo(pulled);
+      await wheel(sign * 70, { momentum: true });
+      await tick(16);
+      expect(offset()).toBeLessThan(pulled);
+      // Keep delivering platform tail events: they must neither hold the edge
+      // out nor restart its return after it has settled.
+      let previous = offset();
+      for (let i = 0; i < 60; i++) {
+        await wheel(sign * 80 * Math.exp(-i / 8), { momentum: true });
+        await tick(16);
+        expect(offset()).toBeLessThanOrEqual(previous + 1e-8);
+        expect(value()).toBe(bound);
+        if (i === 18) expect(end).toHaveBeenCalledExactlyOnceWith(bound);
+        previous = offset();
+      }
+      expect(offset()).toBeCloseTo(0);
+      expect(end).toHaveBeenCalledExactlyOnceWith(bound);
+      // Another real outward gesture must work at the same boundary.
+      await wheel(sign * 16, { momentum: false });
+      expect(offset()).toBeGreaterThan(0);
+      await wheel(sign * 8, { momentum: true });
+      await tick(320);
+      expect(end).toHaveBeenCalledTimes(2);
+    },
+  );
+  it.each([16, 400])(
+    "accepts inward wheel input immediately during/after edge return (%sms)",
+    async (delay) => {
+      await render({ defaultValue: 100 });
+      await wheel(80);
+      await wheel(70, { momentum: true });
+      await tick(delay);
+      await wheel(-8);
+      expect(value()).toBe(99);
+      expect(labelAxis("100")).toBeGreaterThan(200);
+      await tick(16);
+      await wheel(80);
+      expect(value()).toBe(100);
+      expect(labelAxis("100")).toBeLessThan(200);
+    },
+  );
+  it("accepts wheel input after an explicit disabled transition", async () => {
+    const end = vi.fn();
+    await render({ defaultValue: 100, onValueChangeEnd: end });
+    await wheel(80);
+    await wheel(40, { momentum: true });
+    await tick(320);
     await render({
-      platform: "harmony",
+      defaultValue: 100,
+      disabled: true,
       onValueChangeEnd: end,
-      onValueChange: change,
     });
-    await touch("touchstart");
-    slider().scrollLeft = 432;
-    await tick(32);
-    await touch("touchend");
-    skipFrames = true;
-    slider().scrollLeft = 451;
-    await tick(180);
-    expect(end).not.toHaveBeenCalled();
-    expect(slider().scrollLeft).toBe(451);
-    await tick(180);
-    expect(slider().scrollLeft).toBe(448);
-    expect(change).toHaveBeenLastCalledWith(56, { source: "momentum" });
-    expect(end).toHaveBeenCalledExactlyOnceWith(56);
+    await render({
+      defaultValue: 100,
+      disabled: false,
+      onValueChangeEnd: end,
+    });
+    await wheel(80);
+    await wheel(40, { momentum: true });
+    expect(labelAxis("100")).toBeLessThan(200);
+    await tick(320);
+    expect(end).toHaveBeenCalledTimes(2);
   });
-  it("keeps native pointer input held until release without requiring Touch Events", async () => {
+  it("returns visibly on the first frame even after a very long edge pull", async () => {
+    await render({ defaultValue: 0 });
+    await pointer("pointerdown", 200);
+    await pointer("pointermove", 10200);
+    const pulled = labelAxis("0");
+    await pointer("pointerup", 10200);
+    await tick(16);
+    expect(labelAxis("0")).toBeLessThan(pulled - 5);
+  });
+  it("bounces an inertial collision and settles only once", async () => {
     const end = vi.fn();
-    await render({ platform: "harmony", onValueChangeEnd: end });
-    await act(async () =>
-      slider().dispatchEvent(
-        new PointerEvent("pointerdown", {
-          bubbles: true,
-          pointerId: 1,
-          pointerType: "touch",
-        }),
-      ),
-    );
-    slider().scrollLeft = 411;
-    await tick(400);
+    await render({ defaultValue: 85, onValueChangeEnd: end });
+    await fling(80);
+    await tick(80);
+    expect(value()).toBe(100);
+    expect(labelAxis("100")).toBeLessThan(200);
     expect(end).not.toHaveBeenCalled();
-    expect(slider().scrollLeft).toBe(411);
-    await act(async () =>
-      slider().dispatchEvent(
-        new PointerEvent("pointerup", {
-          bubbles: true,
-          pointerId: 1,
-          pointerType: "touch",
-        }),
-      ),
-    );
-    await tick();
-    expect(slider().scrollLeft).toBe(408);
-    expect(end).toHaveBeenCalledExactlyOnceWith(51);
+    await tick(500);
+    expect(labelAxis("100")).toBeCloseTo(200);
+    expect(end).toHaveBeenCalledExactlyOnceWith(100);
   });
-  it("pointercancel does not finish a gesture while Touch Events still report a held finger", async () => {
+  it("can regrab a returning edge and cancels on disable", async () => {
     const end = vi.fn();
-    await render({ platform: "harmony", onValueChangeEnd: end });
-    await touch("touchstart");
-    slider().scrollLeft = 411;
-    await act(async () =>
-      slider().dispatchEvent(
-        new PointerEvent("pointercancel", {
-          bubbles: true,
-          pointerId: 1,
-          pointerType: "touch",
-        }),
-      ),
-    );
-    await tick(400);
+    await render({ defaultValue: 0, onValueChangeEnd: end });
+    await pointer("pointerdown", 200);
+    await pointer("pointermove", 280);
+    await pointer("pointerup", 280);
+    await tick(64);
+    await pointer("pointerdown", 280);
+    const held = labelAxis("0");
+    await tick(500);
+    expect(labelAxis("0")).toBeCloseTo(held);
     expect(end).not.toHaveBeenCalled();
-    await touch("touchend");
-    await tick();
-    expect(end).toHaveBeenCalledExactlyOnceWith(51);
-  });
-});
-
-describe("native mobile gesture ownership", () => {
-  const coarse = () =>
-    vi.spyOn(window, "matchMedia").mockImplementation(
-      (query) =>
-        ({
-          matches: query === "(pointer: coarse)",
-          media: query,
-        }) as MediaQueryList,
-    );
-  it("does not capture or manually move mouse-like pointers on a touch-first device", async () => {
-    coarse();
-    await render();
-    const capture = vi.fn();
-    slider().setPointerCapture = capture;
-    const writes = vi.spyOn(slider(), "scrollLeft", "set");
-    await act(async () => {
-      slider().dispatchEvent(
-        new PointerEvent("pointerdown", {
-          bubbles: true,
-          pointerId: 9,
-          pointerType: "mouse",
-          button: 0,
-          clientX: 200,
-        }),
-      );
-      slider().dispatchEvent(
-        new PointerEvent("pointermove", {
-          bubbles: true,
-          pointerId: 9,
-          pointerType: "mouse",
-          button: 0,
-          clientX: 100,
-        }),
-      );
+    await render({
+      defaultValue: 0,
+      disabled: true,
+      onValueChangeEnd: end,
     });
-    expect(capture).not.toHaveBeenCalled();
-    expect(writes).not.toHaveBeenCalled();
+    await tick(500);
+    expect(labelAxis("0")).toBeCloseTo(200);
+    expect(end).not.toHaveBeenCalled();
   });
-  it("leaves mobile wheel default scrolling and momentum to the browser", async () => {
-    coarse();
-    await render();
-    const writes = vi.spyOn(slider(), "scrollLeft", "set");
-    const event = new WheelEvent("wheel", {
-      bubbles: true,
-      cancelable: true,
-      deltaX: 40,
-    });
-    await act(async () => slider().dispatchEvent(event));
-    expect(event.defaultPrevented).toBe(false);
-    expect(writes).not.toHaveBeenCalled();
-    slider().scrollLeft = 440;
-    await act(async () => slider().dispatchEvent(new Event("scroll")));
-    await tick(20);
-    expect(slider().getAttribute("aria-valuenow")).toBe("55");
+  it("cleans up an active rebound on unmount", async () => {
+    const end = vi.fn();
+    await render({ defaultValue: 0, onValueChangeEnd: end });
+    await wheel(-80);
+    await tick(140);
+    await act(async () => root.render(null));
+    await tick(500);
+    expect(end).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("settles an overscrolled edge immediately with reduced motion", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+    } as MediaQueryList);
+    const end = vi.fn();
+    await render({ defaultValue: 0, onValueChangeEnd: end });
+    await pointer("pointerdown", 200);
+    await pointer("pointermove", 280);
+    await pointer("pointerup", 280);
+    expect(labelAxis("0")).toBeCloseTo(200);
+    expect(end).toHaveBeenCalledExactlyOnceWith(0);
   });
 });

@@ -1,0 +1,8 @@
+{
+  "name": "ruler-picker-react16-fixture",
+  "private": true,
+  "dependencies": {
+    "react": "16.8.6",
+    "react-dom": "16.8.6"
+  }
+}

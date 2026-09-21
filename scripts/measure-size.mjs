@@ -14,7 +14,8 @@ const result = await build({
   plugins: [
     {
       name: "measure-component-import",
-      resolveId: (id) => (id === "ruler-picker-size-entry" ? virtualId : null),
+      resolveId: (id) =>
+        id === "ruler-picker-size-entry" ? virtualId : null,
       load: (id) =>
         id === virtualId
           ? `export { RulerPicker } from ${JSON.stringify(entry)};`
@@ -45,9 +46,9 @@ if (!javascript || !javascript.includes("RulerPicker"))
   throw new Error(
     "Size entry was eliminated; refusing to report an empty bundle.",
   );
-// Includes native input parity, delayed settling, and queued controlled feedback.
-if (gzipSync(javascript, { level: 9 }).length > 5100)
-  throw new Error("RulerPicker exceeds the 5.1 kB gzip budget.");
+// Includes tactile-motion and both wheel backends (native compatibility + engine); React is external.
+if (gzipSync(javascript, { level: 9 }).length > 8000)
+  throw new Error("RulerPicker exceeds the 8 kB gzip budget.");
 const pkg = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );

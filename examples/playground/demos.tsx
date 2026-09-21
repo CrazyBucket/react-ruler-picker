@@ -20,9 +20,8 @@ export const stories: Story[] = [
     eyebrow: "BASIC",
     eyebrowZh: "基础模式",
     description:
-      "Horizontal numeric scale supporting pointer dragging, trackpad/wheel scrolling, and keyboard arrow navigation.",
-    descriptionZh:
-      "基础水平刻度尺，支持鼠标拖拽、滚轮滑动及键盘方向键调节数值。",
+    "Horizontal numeric scale supporting pointer dragging and trackpad/wheel input.",
+    descriptionZh: "基础水平刻度尺，支持鼠标拖拽与滚轮滑动。",
     value: 170,
     props: { min: 80, max: 220, step: 1, majorStep: 10, labelStep: 10 },
   },
@@ -90,8 +89,7 @@ export const stories: Story[] = [
     eyebrowZh: "反向排列",
     description:
       "Reversed scale direction for countdown or inverted range inputs, maintaining aligned tick labels.",
-    descriptionZh:
-      "反向递增刻度排列，适用于倒计时或倒序数值选择场景。",
+    descriptionZh: "反向递增刻度排列，适用于倒计时或倒序数值选择场景。",
     value: 70,
     props: { min: 0, max: 95, reverse: true, majorStep: 10, labelStep: 10 },
   },
@@ -171,7 +169,13 @@ export const stories: Story[] = [
     descriptionZh:
       "表单提交或弹窗收起时禁用标尺交互，立即阻断手势交互并取消进行中的惯性滑动。",
     value: 170,
-    props: { min: 80, max: 220, disabled: true, majorStep: 10, labelStep: 10 },
+    props: {
+      min: 80,
+      max: 220,
+      disabled: true,
+      majorStep: 10,
+      labelStep: 10,
+    },
   },
 ];
 
@@ -275,18 +279,32 @@ export const apiRows: [string, string, string, string, string][] = [
     "样式化、格式化或替换数值显示行。formatValue 同时提供 aria-valuetext。",
   ],
   [
-    "platform",
-    "'auto' | 'ios' | 'android' | 'harmony'",
-    "'auto'",
-    "Target platform mode. 'android' and 'harmony' enable momentum sampling to handle dropped scroll events in WebViews.",
-    "目标平台模式。'android' 与 'harmony' 会启用惯性采样以补充 WebView 中偶发丢失的滚动事件。",
+    "motion",
+    "RulerMotionOptions",
+    "{ friction: 0.9, velocityMultiplier: 1, maxVelocity: 3, threshold: 0.01 }",
+    "Pointer and momentum-capable wheel physics in CSS px/ms. Older browsers use native wheel inertia.",
+    "拖拽及支持 momentum 的滚轮使用的物理参数，单位 CSS px/ms。旧浏览器滚轮惯性交由原生滚动。",
+  ],
+  [
+    "wheelSensitivity",
+    "number",
+    "1.8",
+    "Wheel distance gain, default 1.8. Scales input distance; native fallback scales its scroll range. Zero disables wheel input.",
+    "滚轮距离增益，默认 1.8。调整输入距离；原生 fallback 通过滚动范围换算实现。0 关闭滚轮输入。",
   ],
   [
     "disabled",
     "boolean",
     "false",
-    "Disables pointer, wheel, keyboard, and ref interactions, cancelling active momentum.",
-    "禁用指针、滚轮、键盘与 ref 操作，并中止进行中的惯性滚动。",
+    "Disables pointer, wheel, and ref interactions, cancelling active momentum.",
+    "禁用指针、滚轮与 ref 操作，并中止进行中的惯性滚动。",
+  ],
+  [
+    "onKeyDown / onKeyUp",
+    "KeyboardEventHandler<HTMLDivElement>",
+    "—",
+    "Forwarded to the focusable surface. No built-in key mapping or preventDefault; consumers can call ref methods.",
+    "直接透传给可聚焦的交互区域，不内置按键映射或 preventDefault；可自行调用 ref 方法。",
   ],
   [
     "onScrollStart",
@@ -299,8 +317,8 @@ export const apiRows: [string, string, string, string, string][] = [
     "onValueChange",
     "(value, { source }) => void",
     "—",
-    "Triggered on value change. Sources: drag, momentum, keyboard, programmatic.",
-    "仅在数值变化时触发。来源包括：drag、momentum、keyboard、programmatic。",
+    "Triggered on value change. Sources: drag, wheel, momentum, programmatic.",
+    "仅在数值变化时触发。来源包括：drag、wheel、momentum、programmatic。",
   ],
   [
     "onValueChangeEnd",
